@@ -102,18 +102,19 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
         chat_history = []
 
     # 3. System Prompt
+    # Update System Prompt rule #1 & language policy
     system_prompt = (
-        "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n"
-        "Your job is to answer customer questions naturally in Sheng, Swahili, or English.\n\n"
+        "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n\n"
+        "LANGUAGE POLICY:\n"
+        "- Reply in the EXACT same language the user uses. If they ask in English, reply in English! If they ask in Swahili/Sheng, reply in Swahili/Sheng.\n\n"
         "STRICT BEHAVIOR RULES:\n"
-        "1. GENERAL INQUIRIES & PRICING: If the user asks for prices, stock, or greetings (e.g. 'hi', 'how much is a hub', 'do you have shock absorbers'), ANSWER DIRECTLY with the price and stock quantity. DO NOT call `capture_lead`.\n"
-        "2. DELIVERY COSTS: When a customer asks about delivery fees, shipping rates, or delivery to a specific location, call `calculate_delivery`.\n"
-        "3. EXPLICIT ORDERS: Call `capture_lead` ONLY when the customer explicitly states they want to BUY, ORDER, RESERVE, or request DELIVERY.\n"
-        "4. OUT OF STOCK / UNLISTED PARTS: If the part is NOT in stock or not listed, state: 'Nime-check stock, hiyo part haipatikani kwa sasa lakini nimemjulisha owner wetu wa Kirinyaga Road akutafute!' and call `capture_lead` with status 'NEEDS_HUMAN_ATTENTION'.\n"
-        "5. NATURAL CONVERSATION: Never mention 'database' or 'live inventory'. Speak like a friendly human shop attendant.\n\n"
+        "1. PRICING & INQUIRIES: If the user asks for prices, stock, or greetings (e.g., 'how much is a shock absorber'), ALWAYS provide the price and stock quantity from LIVE INVENTORY first. Do NOT call capture_lead unless they want to place an order.\n"
+        "2. DELIVERY COSTS: Call `calculate_delivery` strictly when asked about shipping/delivery to a location.\n"
+        "3. EXPLICIT ORDERS: Call `capture_lead` ONLY when the customer explicitly says they want to buy, order, or request delivery.\n"
+        "4. OUT OF STOCK / UNLISTED PARTS: State that the part is currently unavailable and that the store owner will follow up.\n"
+        "5. NATURAL CONVERSATION: Never mention 'database' or 'live inventory'. Speak like a helpful shop attendant.\n\n"
         f"LIVE INVENTORY:\n{inventory_text}"
     )
-
     messages_payload: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
 
     for msg in chat_history:
@@ -154,21 +155,23 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
 
             # Initialize default variable to avoid unbound variable warnings
             bot_reply = ""
-
             tool_calls = message_obj.get("tool_calls")
+            
+            # Extract any direct text response the LLM generated alongside tools
+            llm_text = message_obj.get("content") or ""
+
             if tool_calls:
                 for tool_call in tool_calls:
                     func_name = tool_call["function"]["name"]
                     args = json.loads(tool_call["function"]["arguments"])
 
-                    # Delivery words check on user's CURRENT message
                     msg_lower = payload.message.lower()
                     delivery_keywords = ["deliver", "delivery", "ship", "courier", "send to", "transport", "fare"]
 
                     if func_name == "calculate_delivery" and any(k in msg_lower for k in delivery_keywords):
                         location = args.get("location", "")
                         delivery_quote = calculate_delivery_fee(location)
-                        bot_reply = f"{delivery_quote} Tunatuma na rider ama courier mara moja!"
+                        bot_reply = f"{delivery_quote} We can send a rider or courier right away!"
 
                     elif func_name == "capture_lead":
                         background_tasks.add_task(
@@ -178,13 +181,14 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             notes=args.get("notes", payload.message),
                             status=args.get("status", "Pending")
                         )
-
-                        llm_content = message_obj.get("content")
-                        if llm_content:
-                            bot_reply = llm_content
+                        # Use LLM generated text if present, otherwise default confirmation
+                        if llm_text.strip():
+                            bot_reply = llm_text
                         else:
-                            bot_reply = f"Asante! Nime-log order yako ya '{args.get('intent', 'Spare Part')}'. Owner wetu wa Kirinyaga Road ata-contact wewe sasa hivi!"
-
+                            bot_reply = f"Thank you! I have logged your order request for '{args.get('intent', 'Spare Part')}'. Our team will contact you shortly."
+            else:
+                bot_reply = llm_text
+                
             # Log conversations asynchronously
             background_tasks.add_task(
                 save_message_to_history,
