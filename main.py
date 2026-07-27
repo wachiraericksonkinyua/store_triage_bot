@@ -47,24 +47,24 @@ def save_message_to_history(phone: str, role: str, content: str):
         print(f"❌ Failed to save message history: {str(e)}")
 
 
+# 1. Sharpen tool description so price inquiries don't trigger it prematurely
 TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
             "name": "capture_lead",
-            "description": "Call this tool ONLY when the customer wants to buy spare parts, place an order, or requests a representative to call them back.",
+            "description": "Call this tool strictly when the customer explicitly asks to BUY, PLACE AN ORDER, DISPATCH, or requests a CALLBACK. Do NOT call this tool for general pricing or stock inquiries.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "intent": {"type": "string", "description": "e.g. Spare Part Order, Quote Request"},
-                    "notes": {"type": "string", "description": "Car model, year, and specific requested parts"}
+                    "intent": {"type": "string", "description": "e.g. Spare Part Order, Callback Request"},
+                    "notes": {"type": "string", "description": "Car model and items ordered"}
                 },
                 "required": ["intent", "notes"]
             }
         }
     }
 ]
-
 
 @app.post("/chat")
 async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTasks):
@@ -161,7 +161,12 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             notes=args.get("notes", payload.message)
                         )
                 
-                bot_reply = "Thank you! I have logged your order request for Ayutech Motors Limited. Our sales desk will verify stock and contact you shortly!"
+                # If LLM generated text along with tool call, use it! Otherwise fallback.
+                llm_content = message_obj.get("content")
+                if llm_content:
+                    bot_reply = llm_content
+                else:
+                    bot_reply = "Thank you! I have logged your request for Ayutech Motors Limited. Our team will contact you shortly!"
             else:
                 bot_reply = message_obj.get("content", "")
 
