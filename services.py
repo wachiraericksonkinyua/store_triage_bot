@@ -1,5 +1,8 @@
 import httpx
 from config import supabase, AYUTECH_STORE_ID, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TOKEN
+from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from config import AYUTECH_STORE_ID, supabase
 
 def save_lead_to_supabase(phone: str, intent: str, notes: str, status: str = "Pending"):
     try:
@@ -84,3 +87,45 @@ def calculate_delivery_fee(location_text: str) -> str:
             return f"Delivery to {area.title()} is KES {rate} via local courier."
 
     return "Delivery within Nairobi ranges between KES 200 - KES 500 depending on exact distance from Kirinyaga Road."
+
+def check_and_send_pending_followups():
+    """Finds pending leads older than 2 hours and sends a WhatsApp follow-up."""
+    try:
+        # Calculate time 2 hours ago
+        two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+
+        # Query pending leads older than 2 hours
+        response = (
+            supabase.table("leads")
+            .select("id, customer_phone, intent, notes, created_at, status")
+            .eq("business_id", AYUTECH_STORE_ID)
+            .eq("status", "Pending")
+            .lt("created_at", two_hours_ago)
+            .execute()
+        )
+
+        pending_leads = response.data or []
+
+        for lead in pending_leads:
+            phone = lead.get("customer_phone")
+            intent = lead.get("intent", "Spare Part Order")
+            lead_id = lead.get("id")
+
+            if not phone:
+                continue
+
+            followup_msg = (
+                f"Habari! 👋 Nilitaka ku-check tu kama ulipata msaada wa order yako ya '{intent}'. "
+                "Team ya Ayutech Kirinyaga Road bado ipo tayari kukusaidia!"
+            )
+
+            # Send WhatsApp nudge
+            send_whatsapp_message(phone, followup_msg)
+
+            # Mark status as 'Followed Up' to avoid duplicate messages
+            supabase.table("leads").update({"status": "Followed Up"}).eq("id", lead_id).execute()
+
+            print(f"✅ Automated follow-up sent to {phone} for lead {lead_id}")
+
+    except Exception as e:
+        print(f"⚠️ Error running follow-up scheduler: {str(e)}")

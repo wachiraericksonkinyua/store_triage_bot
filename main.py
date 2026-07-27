@@ -2,7 +2,8 @@ import json
 import httpx
 from typing import Any, Dict, List
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
-
+from apscheduler.schedulers.background import BackgroundScheduler
+from services import check_and_send_pending_followups
 from config import GROQ_API_KEY, WHATSAPP_VERIFY_TOKEN, AYUTECH_STORE_ID, supabase
 from schemas import WebhookPayload, TOOLS_SCHEMA
 from services import (
@@ -13,6 +14,18 @@ from services import (
 )
 
 app = FastAPI(title="Ayutech Motors Engine & WhatsApp Webhook")
+scheduler = BackgroundScheduler()
+
+@app.on_event("startup")
+def start_scheduler():
+    # Checks Supabase every 15 minutes for idle leads
+    scheduler.add_job(check_and_send_pending_followups, 'interval', minutes=15)
+    scheduler.start()
+    print("⏰ Background Follow-up Scheduler started!")
+
+@app.on_event("shutdown")
+def stop_scheduler():
+    scheduler.shutdown()
 
 
 @app.get("/")
@@ -210,3 +223,4 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LLM request error: {str(e)}")
+
