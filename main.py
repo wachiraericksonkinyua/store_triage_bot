@@ -161,7 +161,11 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                     func_name = tool_call["function"]["name"]
                     args = json.loads(tool_call["function"]["arguments"])
 
-                    if func_name == "calculate_delivery":
+                    # Delivery words check on user's CURRENT message
+                    msg_lower = payload.message.lower()
+                    delivery_keywords = ["deliver", "delivery", "ship", "courier", "send to", "transport", "fare"]
+
+                    if func_name == "calculate_delivery" and any(k in msg_lower for k in delivery_keywords):
                         location = args.get("location", "")
                         delivery_quote = calculate_delivery_fee(location)
                         bot_reply = f"{delivery_quote} Tunatuma na rider ama courier mara moja!"
@@ -180,8 +184,6 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             bot_reply = llm_content
                         else:
                             bot_reply = f"Asante! Nime-log order yako ya '{args.get('intent', 'Spare Part')}'. Owner wetu wa Kirinyaga Road ata-contact wewe sasa hivi!"
-            else:
-                bot_reply = message_obj.get("content", "")
 
             # Log conversations asynchronously
             background_tasks.add_task(
