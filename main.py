@@ -9,56 +9,55 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-app = FastAPI(title="Track W: Memory-Aware Triage Engine")
+app = FastAPI(title="Ayutech Motors Inventory Engine")
 
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
 
+AYUTECH_STORE_ID = "ayutech"
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 class WebhookPayload(BaseModel):
-    business_id: str
     user_phone: str
     message: str
 
-def save_lead_to_supabase(business_id: str, phone: str, intent: str, notes: str):
+def save_lead_to_supabase(phone: str, intent: str, notes: str):
     try:
         supabase.table("leads").insert({
-            "business_id": business_id,
+            "business_id": AYUTECH_STORE_ID,
             "customer_phone": phone,
             "intent": intent,
             "notes": notes
         }).execute()
-        print(f" [Lead Saved via Tool] Business: {business_id} | Phone: {phone}")
+        print(f" [Ayutech Lead Saved] Phone: {phone} | Intent: {intent}")
     except Exception as e:
         print(f"❌ Failed to save lead: {str(e)}")
 
-def save_message_to_history(business_id: str, phone: str, role: str, content: str):
+def save_message_to_history(phone: str, role: str, content: str):
     try:
         supabase.table("conversations").insert({
-            "business_id": business_id,
+            "business_id": AYUTECH_STORE_ID,
             "customer_phone": phone,
             "role": role,
             "content": content
         }).execute()
-        print(f" [History Saved] Role: {role}")
     except Exception as e:
         print(f"❌ Failed to save message history: {str(e)}")
 
 
-# Simplified tool schema
 TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
             "name": "capture_lead",
-            "description": "Call this tool ONLY when the customer explicitly asks to BUY, ORDER, RESERVE an item, or requests a HUMAN callback.",
+            "description": "Call this tool ONLY when the customer wants to buy spare parts, place an order, or requests a representative to call them back.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "intent": {"type": "string"},
-                    "notes": {"type": "string"}
+                    "intent": {"type": "string", "description": "e.g. Spare Part Order, Quote Request"},
+                    "notes": {"type": "string", "description": "Car model, year, and specific requested parts"}
                 },
                 "required": ["intent", "notes"]
             }
@@ -69,26 +68,30 @@ TOOLS_SCHEMA = [
 
 @app.post("/chat")
 async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTasks):
-    # A. Fetch store context
+    # A. Fetch dynamic product inventory from Database
     try:
-        response = supabase.table("stores").select("*").eq("id", payload.business_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail=f"Business '{payload.business_id}' not found.")
+        products_response = supabase.table("products").select("name, category, car_model, price, stock_quantity").eq("is_available", True).execute()
+        inventory_list = products_response.data or []
         
-        store = cast(Dict[str, Any], response.data[0])
-        store_name = str(store.get("name", "Store"))
-        store_context = str(store.get("context_data", ""))
-    except HTTPException:
-        raise
+        # Format inventory into clean readable string for LLM
+        inventory_text = ""
+        for p in inventory_list:
+            if isinstance(p, dict):
+                p_name = p.get("name", "Item")
+                p_cat = p.get("category", "General")
+                p_model = p.get("car_model", "Universal")
+                p_price = p.get("price", "N/A")
+                p_stock = p.get("stock_quantity", 0)
+                inventory_text += f"- Item: {p_name} | Category: {p_cat} | Model: {p_model} | Price: KES {p_price} | Stock: {p_stock} units\n"  
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+        inventory_text = "No active inventory listed."
 
     # B. Fetch recent chat history
     try:
         history_response = (
             supabase.table("conversations")
             .select("role, content")
-            .eq("business_id", payload.business_id)
+            .eq("business_id", AYUTECH_STORE_ID)
             .eq("customer_phone", payload.user_phone)
             .order("created_at", desc=True)
             .limit(6)
@@ -99,12 +102,15 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
     except Exception:
         chat_history = []
 
-    # C. System Prompt
+    # C. System Prompt with Live Inventory Context
     system_prompt = (
-        f"You are a store assistant for {store_name}.\n"
-        f"Answer customer questions accurately using ONLY the context provided below.\n"
-        f"Do NOT invent or use functions outside of `capture_lead`.\n\n"
-        f"CONTEXT:\n{store_context}"
+        "You are the official WhatsApp AI Assistant for Ayutech Motors Limited (Located on Kirinyaga Road, Nairobi).\n"
+        "Your task is to help customers check spare parts availability, pricing, and compatibility.\n\n"
+        "STRICT RULES:\n"
+        "1. Check the LIVE INVENTORY list below to answer pricing and availability questions accurately.\n"
+        "2. If an item is out of stock or not listed in inventory, inform the customer and offer to take their details so sales reps can source it.\n"
+        "3. Call `capture_lead` whenever the customer explicitly wants to order, purchase, or request a call.\n\n"
+        f"LIVE INVENTORY TABLE:\n{inventory_text}"
     )
 
     messages_payload: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
@@ -118,7 +124,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
         
     messages_payload.append({"role": "user", "content": payload.message})
 
-    # D. Call Groq API with llama-3.3-70b-versatile
+    # D. Call Groq LLM
     async with httpx.AsyncClient() as client:
         try:
             llm_response = await client.post(
@@ -138,7 +144,6 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             )
             
             if llm_response.status_code != 200:
-                print(f"❌ Groq Error: {llm_response.text}")
                 raise HTTPException(status_code=500, detail=f"Groq API Error: {llm_response.text}")
 
             result = llm_response.json()
@@ -151,34 +156,31 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                         args = json.loads(tool_call["function"]["arguments"])
                         background_tasks.add_task(
                             save_lead_to_supabase,
-                            business_id=payload.business_id,
                             phone=payload.user_phone,
-                            intent=args.get("intent", "General Lead"),
+                            intent=args.get("intent", "Spare Part Order"),
                             notes=args.get("notes", payload.message)
                         )
                 
-                bot_reply = f"I've logged your request for our team at {store_name}. Someone will reach out to you shortly!"
+                bot_reply = "Thank you! I have logged your order request for Ayutech Motors Limited. Our sales desk will verify stock and contact you shortly!"
             else:
                 bot_reply = message_obj.get("content", "")
 
-            # E. Save history asynchronously
+            # E. Save chat history
             background_tasks.add_task(
                 save_message_to_history,
-                business_id=payload.business_id,
                 phone=payload.user_phone,
                 role="user",
                 content=payload.message
             )
             background_tasks.add_task(
                 save_message_to_history,
-                business_id=payload.business_id,
                 phone=payload.user_phone,
                 role="assistant",
                 content=bot_reply
             )
 
             return {
-                "business_id": payload.business_id,
+                "store": "Ayutech Motors Limited",
                 "recipient": payload.user_phone,
                 "reply": bot_reply
             }
