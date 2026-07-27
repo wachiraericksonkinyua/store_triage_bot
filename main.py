@@ -2,18 +2,23 @@ import os
 import json
 import httpx
 from typing import Any, Dict, List, cast
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 load_dotenv()
 
-app = FastAPI(title="Ayutech Motors Inventory Engine")
+app = FastAPI(title="Ayutech Motors Engine & WhatsApp Webhook")
 
+# Environment Variables
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+
+WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 
 AYUTECH_STORE_ID = "ayutech"
 
@@ -23,6 +28,7 @@ class WebhookPayload(BaseModel):
     user_phone: str
     message: str
 
+# Helper: Save lead to Supabase
 def save_lead_to_supabase(phone: str, intent: str, notes: str):
     try:
         supabase.table("leads").insert({
@@ -35,6 +41,7 @@ def save_lead_to_supabase(phone: str, intent: str, notes: str):
     except Exception as e:
         print(f"❌ Failed to save lead: {str(e)}")
 
+# Helper: Save conversation turn
 def save_message_to_history(phone: str, role: str, content: str):
     try:
         supabase.table("conversations").insert({
@@ -46,8 +53,32 @@ def save_message_to_history(phone: str, role: str, content: str):
     except Exception as e:
         print(f"❌ Failed to save message history: {str(e)}")
 
+# Helper: Send reply back to user via Meta Cloud API
+async def send_whatsapp_message(to_phone: str, text_message: str):
+    if not WHATSAPP_PHONE_NUMBER_ID or not WHATSAPP_TOKEN:
+        print("⚠️ Meta WhatsApp credentials missing in environment variables.")
+        return
 
-# 1. Sharpen tool description so price inquiries don't trigger it prematurely
+    url = f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text_message}
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            print(f" [Meta WhatsApp API Response]: {res.status_code}")
+        except Exception as e:
+            print(f"❌ Failed to send WhatsApp message: {str(e)}")
+
+
 TOOLS_SCHEMA = [
     {
         "type": "function",
@@ -66,14 +97,64 @@ TOOLS_SCHEMA = [
     }
 ]
 
+# Root endpoint check
+@app.get("/")
+def home():
+    return {"status": "Ayutech Motors AI Engine Running"}
+
+# 1. Verification Endpoint for Meta Dashboard setup
+@app.get("/webhook")
+async def verify_webhook(request: Request):
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    if mode and token:
+        if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+            print(" WEBHOOK_VERIFIED")
+            return Response(content=challenge, status_code=200)
+        else:
+            raise HTTPException(status_code=403, detail="Verification token mismatch")
+    raise HTTPException(status_code=400, detail="Missing verification parameters")
+
+# 2. Webhook to process incoming WhatsApp messages from Meta
+@app.post("/webhook")
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await request.json()
+        entry = data.get("entry", [])[0]
+        changes = entry.get("changes", [])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages", [])
+
+        if messages:
+            msg = messages[0]
+            user_phone = msg.get("from")
+            
+            if msg.get("type") == "text":
+                user_text = msg.get("text", {}).get("body", "")
+
+                payload = WebhookPayload(user_phone=user_phone, message=user_text)
+                response_data = await chat_endpoint(payload, background_tasks)
+                reply_text = response_data.get("reply", "")
+                
+                # Send response back to user's WhatsApp
+                background_tasks.add_task(send_whatsapp_message, user_phone, reply_text)
+
+        return {"status": "success"}
+    except Exception as e:
+        print(f"⚠️ Webhook payload error or read event: {str(e)}")
+        return {"status": "ignored"}
+
+# 3. Direct Chat Logic Endpoint
 @app.post("/chat")
 async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTasks):
-    # A. Fetch dynamic product inventory from Database
+    # A. Fetch dynamic product inventory from Supabase
     try:
         products_response = supabase.table("products").select("name, category, car_model, price, stock_quantity").eq("is_available", True).execute()
         inventory_list = products_response.data or []
         
-        # Format inventory into clean readable string for LLM
         inventory_text = ""
         for p in inventory_list:
             if isinstance(p, dict):
@@ -83,7 +164,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                 p_price = p.get("price", "N/A")
                 p_stock = p.get("stock_quantity", 0)
                 inventory_text += f"- Item: {p_name} | Category: {p_cat} | Model: {p_model} | Price: KES {p_price} | Stock: {p_stock} units\n"  
-    except Exception as e:
+    except Exception:
         inventory_text = "No active inventory listed."
 
     # B. Fetch recent chat history
@@ -102,9 +183,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
     except Exception:
         chat_history = []
 
-    # C. System Prompt with Live Inventory Context
-    # C. System Prompt with Live Inventory Context
-    # C. System Prompt with Live Inventory Context
+    # C. System Prompt
     system_prompt = (
         "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n"
         "Your task is to answer customer questions about car spare parts, stock availability, and pricing in a helpful, conversational tone (Sheng, Swahili, or English depending on how the customer speaks).\n\n"
@@ -115,6 +194,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
         "4. Call `capture_lead` ONLY when the customer explicitly says they want to BUY, ORDER, RESERVE, or ask for a CALLBACK.\n\n"
         f"INVENTORY:\n{inventory_text}"
     )
+
     messages_payload: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     
     for msg in chat_history:
@@ -163,16 +243,15 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             notes=args.get("notes", payload.message)
                         )
                 
-                # If LLM generated text along with tool call, use it! Otherwise fallback.
                 llm_content = message_obj.get("content")
                 if llm_content:
                     bot_reply = llm_content
                 else:
-                    bot_reply = "Thank you! I have logged your request for Ayutech Motors Limited. Our team will contact you shortly!"
+                    bot_reply = "Thank you! I have logged your order request for Ayutech Motors Limited. Our team will contact you shortly!"
             else:
                 bot_reply = message_obj.get("content", "")
 
-            # E. Save chat history
+            # E. Save history asynchronously
             background_tasks.add_task(
                 save_message_to_history,
                 phone=payload.user_phone,
