@@ -160,7 +160,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             msg_lower = payload.message.lower()
 
             # Keywords indicating actual purchase intent
-            buy_keywords = ["buy", "order", "nunua", "agizo", "reserve", "take 1", "take 2", "take 3", "take 4", "take 5", "unit"]
+            buy_keywords = ["buy", "order", "nunua", "agizo", "reserve", "take", "take 2", "take 3", "take 4", "take 5", "unit", "need", "want", "unit"]
             delivery_keywords = ["deliver", "delivery", "ship", "courier", "send to", "transport", "fare"]
 
             if tool_calls:
