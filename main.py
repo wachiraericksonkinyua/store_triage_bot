@@ -153,26 +153,29 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             message_obj = result["choices"][0]["message"]
 
             # Initialize default variable to avoid unbound variable warnings
-            bot_reply = ""
             tool_calls = message_obj.get("tool_calls")
-            
-            # Extract any direct text response the LLM generated alongside tools
             llm_text = message_obj.get("content") or ""
+            bot_reply = llm_text
+
+            msg_lower = payload.message.lower()
+
+            # Keywords indicating actual purchase intent
+            buy_keywords = ["buy", "order", "nunua", "agizo", "reserve", "take 1", "take 2", "take 3", "take 4", "take 5", "unit"]
+            delivery_keywords = ["deliver", "delivery", "ship", "courier", "send to", "transport", "fare"]
 
             if tool_calls:
                 for tool_call in tool_calls:
                     func_name = tool_call["function"]["name"]
                     args = json.loads(tool_call["function"]["arguments"])
 
-                    msg_lower = payload.message.lower()
-                    delivery_keywords = ["deliver", "delivery", "ship", "courier", "send to", "transport", "fare"]
-
+                    # 1. Delivery Quote Tool
                     if func_name == "calculate_delivery" and any(k in msg_lower for k in delivery_keywords):
                         location = args.get("location", "")
                         delivery_quote = calculate_delivery_fee(location)
-                        bot_reply = f"{delivery_quote} We can send a rider or courier right away!"
+                        bot_reply = f"{delivery_quote} We can dispatch via rider or courier right away!"
 
-                    elif func_name == "capture_lead":
+                    # 2. Lead Capture Tool (ONLY run if explicit buy intent exists)
+                    elif func_name == "capture_lead" and any(k in msg_lower for k in buy_keywords):
                         background_tasks.add_task(
                             save_lead_to_supabase,
                             phone=payload.user_phone,
@@ -180,13 +183,8 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             notes=args.get("notes", payload.message),
                             status=args.get("status", "Pending")
                         )
-                        # Use LLM generated text if present, otherwise default confirmation
-                        if llm_text.strip():
-                            bot_reply = llm_text
-                        else:
+                        if not llm_text.strip():
                             bot_reply = f"Thank you! I have logged your order request for '{args.get('intent', 'Spare Part')}'. Our team will contact you shortly."
-            else:
-                bot_reply = llm_text
                 
             # Log conversations asynchronously
             background_tasks.add_task(
