@@ -90,13 +90,13 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
 
     system_prompt = (
         "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n"
-        "Your task is to answer customer questions about car spare parts, stock availability, and pricing in a helpful, conversational tone (Sheng, Swahili, or English depending on how the customer speaks).\n\n"
-        "RULES:\n"
-        "1. Never say phrases like 'According to the LIVE INVENTORY'. Speak naturally as an Ayutech staff member.\n"
-        "2. State prices and stock clearly using the inventory list below.\n"
-        "3. If a part requested is NOT in stock or not listed, state politely that our team is verifying with our Kirinyaga Road store, and call `capture_lead` with status 'NEEDS_HUMAN_ATTENTION'.\n"
-        "4. Call `capture_lead` when the customer explicitly wants to BUY, ORDER, or RESERVE.\n\n"
-        f"INVENTORY:\n{inventory_text}"
+        "Your job is to answer customer questions naturally in Sheng, Swahili, or English.\n\n"
+        "STRICT BEHAVIOR RULES:\n"
+        "1. GENERAL INQUIRIES & PRICING: If the user asks for prices, stock, or greetings (e.g. 'hi', 'how much is a hub', 'do you have shock absorbers'), ANSWER DIRECTLY with the price and stock quantity. DO NOT call `capture_lead`.\n"
+        "2. EXPLICIT ORDERS: Call `capture_lead` ONLY when the customer explicitly states they want to BUY, ORDER, RESERVE, or request DELIVERY (e.g. 'I want to buy 5', 'deliver to CBD', 'reserve this for me').\n"
+        "3. OUT OF STOCK / UNLISTED PARTS: If the part is NOT in stock or not listed, state: 'Nime-check stock, hiyo part haipatikani kwa sasa lakini nimemjulisha owner wetu wa Kirinyaga Road akutafute!' and call `capture_lead` with intent 'Out of Stock Request'.\n"
+        "4. NATURAL CONVERSATION: Never mention 'database' or 'live inventory'. Speak like a human shop attendant.\n\n"
+        f"LIVE INVENTORY:\n{inventory_text}"
     )
 
     messages_payload: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
@@ -146,9 +146,12 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             notes=args.get("notes", payload.message),
                             status=args.get("status", "Pending")
                         )
-                
-                llm_content = message_obj.get("content")
-                bot_reply = llm_content if llm_content else "Nime-log order yako! Owner wetu anakupigia simu sasa hivi."
+
+                        llm_content = message_obj.get("content")
+                        if llm_content:
+                            bot_reply = llm_content
+                        else:
+                            bot_reply = f"Asante! Nime-log request yako ya '{args.get('intent', 'Order')}'. Owner wetu wa Kirinyaga Road ata-contact wewe hivi karibuni!"
             else:
                 bot_reply = message_obj.get("content", "")
 
