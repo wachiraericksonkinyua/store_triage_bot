@@ -36,3 +36,9 @@ typing_extensions==4.16.0
 uvicorn==0.51.0
 websockets==15.0.1
 yarl==1.24.5
+fastapi
+uvicorn
+httpx
+supabase
+pydantic
+apscheduler
