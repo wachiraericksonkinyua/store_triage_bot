@@ -12,6 +12,7 @@ from services import (
     save_message_to_history,
     send_whatsapp_message,
     describe_part_image,
+    get_whatsapp_media_url,
 )
 import re
 
@@ -70,11 +71,13 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             if msg_type == "text":
                 user_text = msg.get("text", {}).get("body", "")
             elif msg_type == "image":
-                # Meta passes media ID; for quick testing or media URL extraction:
                 image_info = msg.get("image", {})
                 user_text = image_info.get("caption", "Here is a picture of the part I need.")
-                # If using direct image URL/media object:
-                image_url = image_info.get("url")
+                
+                # Extract media_id from Meta payload
+                media_id = image_info.get("id")
+                if media_id:
+                    image_url = await get_whatsapp_media_url(media_id)
 
             payload = WebhookPayload(
                 user_phone=user_phone, 

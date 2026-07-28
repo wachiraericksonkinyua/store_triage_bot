@@ -13,6 +13,8 @@ from config import (
     WHATSAPP_TOKEN,
     GROQ_API_KEY
 )
+import base64
+
 def save_lead_to_supabase(phone: str, intent: str, notes: str, status: str = "Pending"):
     try:
         supabase.table("leads").insert({
@@ -144,10 +146,23 @@ def check_and_send_pending_followups():
     except Exception as e:
         print(f"⚠️ Error running follow-up scheduler: {str(e)}")
 
+
 async def describe_part_image(image_url: str) -> str:
-    """Uses Groq's Vision model to identify car spare parts from user photos."""
+    """Downloads image from WhatsApp and sends base64 data to Groq Vision."""
     try:
         async with httpx.AsyncClient() as client:
+            # 1. Download image bytes using WhatsApp Token
+            headers_wa = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+            img_res = await client.get(image_url, headers=headers_wa, follow_redirects=True)
+            
+            if img_res.status_code != 200:
+                print(f"⚠️ Image download failed with status: {img_res.status_code}")
+                return "An automotive spare part picture"
+                
+            base64_image = base64.b64encode(img_res.content).decode("utf-8")
+            data_url = f"data:image/jpeg;base64,{base64_image}"
+
+            # 2. Pass base64 data URL to Groq Vision
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
@@ -162,17 +177,17 @@ async def describe_part_image(image_url: str) -> str:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": "Analyze this image of an automotive spare part or car component. Identify what part it is, any visible part numbers, brand names, or car models it belongs to. Keep the description concise under 30 words."
+                                    "text": "Analyze this car spare part photo. Identify what part it is, vehicle model if visible, or part number. Reply in under 25 words."
                                 },
                                 {
                                     "type": "image_url",
-                                    "image_url": {"url": image_url}
+                                    "image_url": {"url": data_url}
                                 }
                             ]
                         }
                     ],
                     "temperature": 0.2,
-                    "max_tokens": 100,
+                    "max_tokens": 80,
                 },
                 timeout=15.0,
             )
@@ -180,9 +195,23 @@ async def describe_part_image(image_url: str) -> str:
             if response.status_code == 200:
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
-            else:
-                print(f"⚠️ Vision API error: {response.text}")
-                return "An automotive spare part picture"
     except Exception as e:
-        print(f"❌ Failed to process image: {str(e)}")
-        return "An automotive spare part picture"
+        print(f"❌ Vision processing failed: {str(e)}")
+    return "An automotive spare part picture"
+
+async def get_whatsapp_media_url(media_id: str) -> str:
+    """Fetches the temporary media URL from Meta WhatsApp API using media_id."""
+    if not WHATSAPP_TOKEN:
+        return ""
+    
+    url = f"https://graph.facebook.com/v20.0/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.get(url, headers=headers)
+            if res.status_code == 200:
+                return res.json().get("url", "")
+        except Exception as e:
+            print(f"❌ Failed to fetch WhatsApp media URL: {str(e)}")
+    return ""
