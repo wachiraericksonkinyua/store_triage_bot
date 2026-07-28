@@ -3,6 +3,7 @@ from config import supabase, AYUTECH_STORE_ID, WHATSAPP_PHONE_NUMBER_ID, WHATSAP
 from datetime import datetime, timedelta, timezone
 from datetime import datetime, timedelta, timezone
 from config import AYUTECH_STORE_ID, supabase
+import asyncio
 
 def save_lead_to_supabase(phone: str, intent: str, notes: str, status: str = "Pending"):
     try:
@@ -104,14 +105,19 @@ def check_and_send_pending_followups():
             .execute()
         )
 
-        pending_leads = response.data or []
+        raw_data = response.data
+        if not raw_data or not isinstance(raw_data, list):
+            return
 
-        for lead in pending_leads:
-            phone = lead.get("customer_phone")
-            intent = lead.get("intent", "Spare Part Order")
-            lead_id = lead.get("id")
+        for lead in raw_data:
+            if not isinstance(lead, dict):
+                continue
 
-            if not phone:
+            phone = str(lead.get("customer_phone", ""))
+            intent = str(lead.get("intent", "Spare Part Order"))
+            lead_id = str(lead.get("id", ""))
+
+            if not phone or not lead_id:
                 continue
 
             followup_msg = (
@@ -120,7 +126,7 @@ def check_and_send_pending_followups():
             )
 
             # Send WhatsApp nudge
-            send_whatsapp_message(phone, followup_msg)
+            asyncio.run(send_whatsapp_message(phone, followup_msg))
 
             # Mark status as 'Followed Up' to avoid duplicate messages
             supabase.table("leads").update({"status": "Followed Up"}).eq("id", lead_id).execute()
