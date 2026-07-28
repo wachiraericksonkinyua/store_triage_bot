@@ -72,12 +72,13 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 user_text = msg.get("text", {}).get("body", "")
             elif msg_type == "image":
                 image_info = msg.get("image", {})
-                user_text = image_info.get("caption", "Here is a picture of the part I need.")
+                user_text = image_info.get("caption", "do you have this?")
                 
-                # Extract media_id from Meta payload
                 media_id = image_info.get("id")
+                print(f"📸 Image message received! Media ID: {media_id}")
                 if media_id:
                     image_url = await get_whatsapp_media_url(media_id)
+                    print(f"🔗 Meta Media URL fetched: {image_url}")
 
             payload = WebhookPayload(
                 user_phone=user_phone, 
@@ -137,15 +138,18 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
     # 3. System Prompt
     # Update System Prompt rule #1 & language policy
    # 3. System Prompt
+    # 3. System Prompt
     system_prompt = (
         "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n\n"
         "STRICT LANGUAGE RULE:\n"
-        "- Detect the language of the VERY LAST USER MESSAGE. If the user writes in English, you MUST reply entirely in English. If they write in Swahili or Sheng, reply in Swahili/Sheng.\n\n"
+        "- Detect the language of the VERY LAST USER MESSAGE. If the user writes in English, reply in English. If Swahili/Sheng, reply in Swahili/Sheng.\n\n"
+        "STRICT IMAGE RULE:\n"
+        "- When the user attaches an image, rely strictly on the system tag [USER ATTACHED AN IMAGE: ...] to answer. NEVER say you cannot see images!\n\n"
         "STRICT BEHAVIOR RULES:\n"
-        "1. PRICING & INQUIRIES: If the user asks for prices, stock, or greetings, provide the exact prices and stock levels directly. Do NOT call `capture_lead`.\n"
-        "2. DELIVERY COSTS: Call `calculate_delivery` when asked about delivery or shipping to a location.\n"
-        "3. EXPLICIT ORDERS: Call `capture_lead` ONLY when the customer explicitly asks to buy, order, or request delivery.\n"
-        "4. NATURAL CONVERSATION: Speak naturally as a helpful store assistant on Kirinyaga Road.\n\n"
+        "1. PRICING & INQUIRIES: If the user asks for prices or stock for an identified part, state exact prices and stock directly from LIVE INVENTORY. Do NOT call `capture_lead`.\n"
+        "2. DELIVERY COSTS: Call `calculate_delivery` when asked about delivery to a location.\n"
+        "3. EXPLICIT ORDERS: Call `capture_lead` ONLY when the customer explicitly asks to buy or order.\n"
+        "4. NATURAL CONVERSATION: Speak naturally as a store assistant on Kirinyaga Road.\n\n"
         f"LIVE INVENTORY:\n{inventory_text}"
     )
     messages_payload: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
