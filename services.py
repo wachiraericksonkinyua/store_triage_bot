@@ -4,7 +4,15 @@ from datetime import datetime, timedelta, timezone
 from datetime import datetime, timedelta, timezone
 from config import AYUTECH_STORE_ID, supabase
 import asyncio
-
+import httpx
+from datetime import datetime, timedelta, timezone
+from config import (
+    supabase, 
+    AYUTECH_STORE_ID, 
+    WHATSAPP_PHONE_NUMBER_ID, 
+    WHATSAPP_TOKEN,
+    GROQ_API_KEY
+)
 def save_lead_to_supabase(phone: str, intent: str, notes: str, status: str = "Pending"):
     try:
         supabase.table("leads").insert({
@@ -135,3 +143,46 @@ def check_and_send_pending_followups():
 
     except Exception as e:
         print(f"⚠️ Error running follow-up scheduler: {str(e)}")
+
+async def describe_part_image(image_url: str) -> str:
+    """Uses Groq's Vision model to identify car spare parts from user photos."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.2-11b-vision-preview",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Analyze this image of an automotive spare part or car component. Identify what part it is, any visible part numbers, brand names, or car models it belongs to. Keep the description concise under 30 words."
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": image_url}
+                                }
+                            ]
+                        }
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 100,
+                },
+                timeout=15.0,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                print(f"⚠️ Vision API error: {response.text}")
+                return "An automotive spare part picture"
+    except Exception as e:
+        print(f"❌ Failed to process image: {str(e)}")
+        return "An automotive spare part picture"

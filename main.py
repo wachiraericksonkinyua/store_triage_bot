@@ -11,6 +11,7 @@ from services import (
     save_lead_to_supabase,
     save_message_to_history,
     send_whatsapp_message,
+    describe_part_image,
 )
 import re
 
@@ -61,21 +62,36 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         if messages:
             msg = messages[0]
             user_phone = msg.get("from")
+            msg_type = msg.get("type")
 
-            if msg.get("type") == "text":
+            user_text = ""
+            image_url = None
+
+            if msg_type == "text":
                 user_text = msg.get("text", {}).get("body", "")
-                payload = WebhookPayload(user_phone=user_phone, message=user_text)
-                response_data = await chat_endpoint(payload, background_tasks)
-                reply_text = response_data.get("reply", "")
+            elif msg_type == "image":
+                # Meta passes media ID; for quick testing or media URL extraction:
+                image_info = msg.get("image", {})
+                user_text = image_info.get("caption", "Here is a picture of the part I need.")
+                # If using direct image URL/media object:
+                image_url = image_info.get("url")
 
-                background_tasks.add_task(send_whatsapp_message, user_phone, reply_text)
+            payload = WebhookPayload(
+                user_phone=user_phone, 
+                message=user_text, 
+                image_url=image_url
+            )
+            response_data = await chat_endpoint(payload, background_tasks)
+            reply_text = response_data.get("reply", "")
+
+            background_tasks.add_task(send_whatsapp_message, user_phone, reply_text)
 
         return {"status": "success"}
     except Exception as e:
         print(f"⚠️ Webhook error: {str(e)}")
         return {"status": "ignored"}
 
-
+    
 @app.post("/chat")
 async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTasks):
     # 1. Fetch live stock inventory from Supabase
@@ -117,6 +133,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
 
     # 3. System Prompt
     # Update System Prompt rule #1 & language policy
+   # 3. System Prompt
     system_prompt = (
         "You are the official customer support assistant for Ayutech Motors Limited on Kirinyaga Road, Nairobi.\n\n"
         "STRICT LANGUAGE RULE:\n"
@@ -137,8 +154,18 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             if c:
                 messages_payload.append({"role": r, "content": c})
 
-    messages_payload.append({"role": "user", "content": payload.message})
+    # Check for attached image and generate description
+    image_context = ""
+    if payload.image_url:
+        part_desc = await describe_part_image(payload.image_url)
+        image_context = f"\n[USER ATTACHED AN IMAGE: {part_desc}]"
 
+    user_final_prompt = f"{payload.message or ''}{image_context}".strip()
+
+    messages_payload.append({"role": "user", "content": user_final_prompt})
+
+   
+    
     # 4. Call Groq LLM
     async with httpx.AsyncClient() as client:
         try:

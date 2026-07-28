@@ -1,10 +1,11 @@
 from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
 
 class WebhookPayload(BaseModel):
     user_phone: str
-    message: str
+    message: Optional[str] = ""
+    image_url: Optional[str] = None
 
-    
 TOOLS_SCHEMA = [
     {
         "type": "function",
