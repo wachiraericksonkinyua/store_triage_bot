@@ -12,6 +12,7 @@ from services import (
     save_message_to_history,
     send_whatsapp_message,
 )
+import re
 
 app = FastAPI(title="Ayutech Motors Engine & WhatsApp Webhook")
 scheduler = BackgroundScheduler()
@@ -199,6 +200,10 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                         if not llm_text.strip():
                             bot_reply = f"Thank you! I have logged your order request for '{args.get('intent', 'Spare Part')}'. Our team will contact you shortly."
                 
+            # Clean out any accidental raw tool leakage from LLM output
+            bot_reply = re.sub(r'<function=.*?>.*?</function>', '', bot_reply).strip()
+            bot_reply = re.sub(r'<function=.*?>', '', bot_reply).strip()
+
             # Log conversations asynchronously
             background_tasks.add_task(
                 save_message_to_history,

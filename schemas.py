@@ -4,18 +4,19 @@ class WebhookPayload(BaseModel):
     user_phone: str
     message: str
 
+    
 TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
             "name": "calculate_delivery",
-            "description": "Call this tool strictly when the customer asks for delivery fees, shipping costs, or asks how much it costs to send parts to a specific location.",
+            "description": "Call this tool ONLY when the user explicitly names a specific neighborhood, town, or location in Nairobi (e.g., CBD, Westlands, Kasarani). Do NOT call if no location name is present.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "location": {
                         "type": "string",
-                        "description": "Location or neighborhood mentioned by the user (e.g. CBD, Westlands, Thika Road)",
+                        "description": "The specific neighborhood or area name mentioned by the user.",
                     }
                 },
                 "required": ["location"],
