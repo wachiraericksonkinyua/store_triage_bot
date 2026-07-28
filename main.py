@@ -198,7 +198,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
             llm_text = message_obj.get("content") or ""
             bot_reply = llm_text
 
-            msg_lower = payload.message.lower()
+            msg_lower = (payload.message or "").lower()
 
             # Keywords indicating actual purchase intent
             buy_keywords = ["buy", "order", "nunua", "agizo", "reserve", "take", "take 2", "take 3", "take 4", "take 5", "unit", "need", "want", "unit"]
@@ -221,7 +221,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                             save_lead_to_supabase,
                             phone=payload.user_phone,
                             intent=args.get("intent", "Spare Part Order"),
-                            notes=args.get("notes", payload.message),
+                            notes=args.get("notes", payload.message or ""),
                             status=args.get("status", "Pending")
                         )
                         if not llm_text.strip():
@@ -236,7 +236,7 @@ async def chat_endpoint(payload: WebhookPayload, background_tasks: BackgroundTas
                 save_message_to_history,
                 phone=payload.user_phone,
                 role="user",
-                content=payload.message,
+                content=payload.message or "",
             )
             background_tasks.add_task(
                 save_message_to_history,
