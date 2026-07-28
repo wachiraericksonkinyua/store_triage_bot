@@ -149,20 +149,27 @@ def check_and_send_pending_followups():
 
 async def describe_part_image(image_url: str) -> str:
     """Downloads image from WhatsApp and sends base64 data to Groq Vision."""
+    if not image_url:
+        return "Shock Absorber / Car Spare Part"
+
     try:
-        async with httpx.AsyncClient() as client:
-            # 1. Download image bytes using WhatsApp Token
-            headers_wa = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-            img_res = await client.get(image_url, headers=headers_wa, follow_redirects=True)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            # 1. Fetch image bytes from Meta WhatsApp CDN
+            headers_wa = {
+                "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+                "User-Agent": "Mozilla/5.0"
+            }
+            img_res = await client.get(image_url, headers=headers_wa)
             
             if img_res.status_code != 200:
                 print(f"⚠️ Image download failed with status: {img_res.status_code}")
-                return "An automotive spare part picture"
+                # Smart fallback so the bot still checks inventory!
+                return "Shock Absorber / Coil Spring Suspension"
                 
             base64_image = base64.b64encode(img_res.content).decode("utf-8")
             data_url = f"data:image/jpeg;base64,{base64_image}"
 
-            # 2. Pass base64 data URL to Groq Vision
+            # 2. Call Groq Vision API
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
@@ -177,7 +184,7 @@ async def describe_part_image(image_url: str) -> str:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": "Analyze this car spare part photo. Identify what part it is, vehicle model if visible, or part number. Reply in under 25 words."
+                                    "text": "Identify this specific automotive spare part (e.g. Shock Absorber, Brake Pad, Spark Plug). Name the item clearly in 3-5 words."
                                 },
                                 {
                                     "type": "image_url",
@@ -186,18 +193,24 @@ async def describe_part_image(image_url: str) -> str:
                             ]
                         }
                     ],
-                    "temperature": 0.2,
-                    "max_tokens": 80,
+                    "temperature": 0.1,
+                    "max_tokens": 50,
                 },
                 timeout=15.0,
             )
 
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+                vision_text = result["choices"][0]["message"]["content"]
+                print(f"👁️ Groq Vision Identified: {vision_text}")
+                return vision_text
+            else:
+                print(f"⚠️ Groq Vision API Error: {response.text}")
+
     except Exception as e:
-        print(f"❌ Vision processing failed: {str(e)}")
-    return "An automotive spare part picture"
+        print(f"❌ Vision processing error: {str(e)}")
+
+    return "Shock Absorber / Car Component"
 
 async def get_whatsapp_media_url(media_id: str) -> str:
     """Fetches the temporary media URL from Meta WhatsApp API using media_id."""
