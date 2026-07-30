@@ -211,6 +211,7 @@ async def describe_part_image(image_url: str) -> str:
         print(f"❌ Vision processing error: {str(e)}")
 
     return "Shock Absorber / Car Component"
+    
 
 async def get_whatsapp_media_url(media_id: str) -> str:
     """Fetches the temporary media URL from Meta WhatsApp API using media_id."""
